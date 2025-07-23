@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 import warnings
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional, TypeVar, overload
 from xml.etree import ElementTree
@@ -46,7 +46,7 @@ class OdxLinkId:
 
     #: The name and type of the document fragment to which the
     #: `local_id` is relative to
-    doc_fragments: list[OdxDocFragment] = field(default_factory=list)
+    doc_fragments: tuple[OdxDocFragment] | tuple[OdxDocFragment, OdxDocFragment]
 
     def __hash__(self) -> int:
         # we do not hash about the document fragment here, because
@@ -95,7 +95,7 @@ class OdxLinkRef:
     ref_id: str
 
     #: The document fragments to which the `ref_id` refers to (in reverse order)
-    ref_docs: list[OdxDocFragment] = field(default_factory=list)
+    ref_docs: tuple[OdxDocFragment, ...]
 
     # TODO: this is difficult because OdxLinkRef is derived from and
     # we do not want having to specify it mandatorily
@@ -143,10 +143,10 @@ class OdxLinkRef:
         # if the target document fragment is specified by the
         # reference, use it, else use the document fragment containing
         # the reference.
-        if docref is not None:
-            doc_frags = [OdxDocFragment(docref, odxrequire(doctype))]
-        else:
+        if docref is None:
             doc_frags = context.doc_fragments
+        else:
+            doc_frags = (OdxDocFragment(docref, odxrequire(doctype)),)
 
         return OdxLinkRef(id_ref, doc_frags)
 
@@ -204,8 +204,10 @@ class OdxLinkDatabase:
             # locate an object exhibiting with the referenced local ID
             # in the ID database for the document fragment
             if (obj := doc_frag_db.get(ref.ref_id)) is not None:
-                if expected_type is not None:
-                    odxassert(isinstance(obj, expected_type))
+                if expected_type is not None and not isinstance(obj, expected_type):
+                    odxraise(f"Referenced object for link {ref.ref_id} is of type "
+                             f"{type(obj).__name__} which is not a subclass of expected "
+                             f"type {expected_type.__name__}")
 
                 return obj
 

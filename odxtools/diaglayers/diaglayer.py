@@ -7,6 +7,7 @@ from itertools import chain
 from typing import Any, Union, cast
 from xml.etree import ElementTree
 
+from ..additionalaudience import AdditionalAudience
 from ..admindata import AdminData
 from ..companydata import CompanyData
 from ..description import Description
@@ -14,6 +15,7 @@ from ..diagcomm import DiagComm
 from ..diagdatadictionaryspec import DiagDataDictionarySpec
 from ..diagservice import DiagService
 from ..exceptions import DecodeError, odxassert, odxraise
+from ..functionalclass import FunctionalClass
 from ..library import Library
 from ..message import Message
 from ..nameditemlist import NamedItemList, TNamed
@@ -26,6 +28,7 @@ from ..servicebinner import ServiceBinner
 from ..singleecujob import SingleEcuJob
 from ..snrefcontext import SnRefContext
 from ..specialdatagroup import SpecialDataGroup
+from ..statechart import StateChart
 from ..subcomponent import SubComponent
 from ..unitgroup import UnitGroup
 from .diaglayerraw import DiagLayerRaw
@@ -95,14 +98,7 @@ class DiagLayer:
         if self.import_refs:
             imported_links: dict[OdxLinkId, Any] = {}
             for import_ref in self.import_refs:
-                imported_dl = odxlinks.resolve(import_ref, DiagLayer)
-
-                odxassert(
-                    imported_dl.variant_type == DiagLayerType.ECU_SHARED_DATA,
-                    f"Tried to import references from diagnostic layer "
-                    f"'{imported_dl.short_name}' of type {imported_dl.variant_type.value}. "
-                    f"Only ECU-SHARED-DATA layers may be referenced using the "
-                    f"IMPORT-REF mechanism")
+                imported_dl = odxlinks.resolve(import_ref)
 
                 # TODO: ensure that the imported diagnostic layer has
                 # not been referenced in any PARENT-REF of the current
@@ -224,11 +220,29 @@ class DiagLayer:
         return self.diag_layer_raw.admin_data
 
     @property
+    def company_datas(self) -> NamedItemList[CompanyData]:
+        return self.diag_layer_raw.company_datas
+
+    @property
+    def functional_classes(self) -> NamedItemList[FunctionalClass]:
+        return self.diag_layer_raw.functional_classes
+
+    @property
+    def diag_data_dictionary_spec(self) -> DiagDataDictionarySpec:
+        """The DiagDataDictionarySpec applicable to this DiagLayer"""
+        return self._diag_data_dictionary_spec
+
+    @property
+    def diag_comms_raw(self) -> list[OdxLinkRef | DiagComm]:
+        return self.diag_layer_raw.diag_comms_raw
+
+    @property
     def diag_comms(self) -> NamedItemList[DiagComm]:
         return self.diag_layer_raw.diag_comms
 
     @property
     def services(self) -> NamedItemList[DiagService]:
+        """This is an alias for `.diag_services`"""
         return self.diag_layer_raw.services
 
     @property
@@ -238,10 +252,6 @@ class DiagLayer:
     @property
     def single_ecu_jobs(self) -> NamedItemList[SingleEcuJob]:
         return self.diag_layer_raw.single_ecu_jobs
-
-    @property
-    def company_datas(self) -> NamedItemList[CompanyData]:
-        return self.diag_layer_raw.company_datas
 
     @property
     def requests(self) -> NamedItemList[Request]:
@@ -264,21 +274,24 @@ class DiagLayer:
         return self.diag_layer_raw.import_refs
 
     @property
-    def libraries(self) -> NamedItemList[Library]:
-        return self.diag_layer_raw.libraries
+    def state_charts(self) -> NamedItemList[StateChart]:
+        return self.diag_layer_raw.state_charts
+
+    @property
+    def additional_audiences(self) -> NamedItemList[AdditionalAudience]:
+        return self.diag_layer_raw.additional_audiences
 
     @property
     def sub_components(self) -> NamedItemList[SubComponent]:
         return self.diag_layer_raw.sub_components
 
     @property
-    def sdgs(self) -> list[SpecialDataGroup]:
-        return self.diag_layer_raw.sdgs
+    def libraries(self) -> NamedItemList[Library]:
+        return self.diag_layer_raw.libraries
 
     @property
-    def diag_data_dictionary_spec(self) -> DiagDataDictionarySpec:
-        """The DiagDataDictionarySpec applicable to this DiagLayer"""
-        return self._diag_data_dictionary_spec
+    def sdgs(self) -> list[SpecialDataGroup]:
+        return self.diag_layer_raw.sdgs
 
     #####
     # </properties forwarded to the "raw" diag layer>
@@ -332,7 +345,7 @@ class DiagLayer:
             # corresponding request for `decode_response()`.)
             request_prefix = b''
             if s.request is not None:
-                request_prefix = s.request.coded_const_prefix()
+                request_prefix = bytes(s.request.coded_const_prefix())
             prefixes = [request_prefix]
             gnrs = getattr(self, "global_negative_responses", [])
             prefixes += [
@@ -363,7 +376,7 @@ class DiagLayer:
         else:
             cast(list[DiagService], sub_tree[-1]).append(service)
 
-    def _find_services_for_uds(self, message: bytes) -> list[DiagService]:
+    def _find_services_for_uds(self, message: bytes | bytearray) -> list[DiagService]:
         prefix_tree = self._prefix_tree
 
         # Find matching service(s) in prefix tree
@@ -378,7 +391,8 @@ class DiagLayer:
                 possible_services += cast(list[DiagService], prefix_tree[-1])
         return possible_services
 
-    def _decode(self, message: bytes, candidate_services: Iterable[DiagService]) -> list[Message]:
+    def _decode(self, message: bytes | bytearray,
+                candidate_services: Iterable[DiagService]) -> list[Message]:
         decoded_messages: list[Message] = []
 
         for service in candidate_services:
@@ -400,7 +414,7 @@ class DiagLayer:
 
                         decoded_messages.append(
                             Message(
-                                coded_message=message,
+                                coded_message=bytes(message),
                                 service=service,
                                 coding_object=gnr,
                                 param_dict=decoded_gnr))
@@ -417,12 +431,13 @@ class DiagLayer:
 
         return decoded_messages
 
-    def decode(self, message: bytes) -> list[Message]:
+    def decode(self, message: bytes | bytearray) -> list[Message]:
         candidate_services = self._find_services_for_uds(message)
 
         return self._decode(message, candidate_services)
 
-    def decode_response(self, response: bytes, request: bytes) -> list[Message]:
+    def decode_response(self, response: bytes | bytearray,
+                        request: bytes | bytearray) -> list[Message]:
         candidate_services = self._find_services_for_uds(request)
         if candidate_services is None:
             raise DecodeError(f"Couldn't find corresponding service for request {request.hex()}.")

@@ -313,7 +313,7 @@ class Comparison(Display):
             param_list2 = [] if service2.request is None else service2.request.parameters
 
             information.append({
-                "list": ["Old list", "New list"],
+                "List": ["Old list", "New list"],
                 "Values": [f"\\{param_list1}", f"\\{param_list2}"]
             })
 

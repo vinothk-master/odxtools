@@ -304,7 +304,7 @@ class Comparison(Display):
         else:
             changed_params += "request parameter list, "
             # infotext
-            information.append(f"list of request parameters for service '{service2.short_name}' "
+            information.append(f"List of request parameters for service '{service2.short_name}' "
                                f"is not identical.\n")
 
             # table
